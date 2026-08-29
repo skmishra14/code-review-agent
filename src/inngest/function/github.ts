@@ -17,10 +17,9 @@ import "dotenv/config";
 export const githubPullRequest = inngest.createFunction(
     { id: 'pr-request-function', triggers: [{ event: 'github/pr.request' }] },
     async ({ event, step }) => {
+        const { owner, repo, pull_number } = event.data;
         // 1. fetch pull request information
         const pullRequestInfo = await step.run('fetch-pull-request-information', async () => {
-            const { owner, repo, pull_number } = event.data;
-
             // check if request exists
             try {
                 const pullRequestObject = await octokit.pulls.get({ owner, repo, pull_number });
@@ -56,6 +55,24 @@ export const githubPullRequest = inngest.createFunction(
             }
         }
 
-        // 
+        // 2. fetch the details of the changes
+        const changes = await step.run('fetch-changes', async () => {
+            const changedResult = await octokit.paginate(octokit.pulls.listFiles, {
+                owner,
+                repo,
+                pull_number,
+                per_page: 100
+            });
+
+            return changedResult.map((change) => ({
+                fileName: change.filename,
+                status: change.status,
+                additions: change.additions,
+                patch: change.patch,
+                deletions: change.deletions,
+                previous_filename: change.previous_filename,
+                changes: change.changes
+            }));
+        });
     }
 );
