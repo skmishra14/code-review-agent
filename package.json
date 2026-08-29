@@ -5,13 +5,14 @@
   "main": "index.js",
   "scripts": {
     "build": "npx tsc -p .",
-    "run": "node dist/index.js"
+    "dev": "INNGEST_DEV=1 node dist/index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^26.4.0",
     "typescript": "^7.0.2"
   },
