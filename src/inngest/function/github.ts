@@ -1,6 +1,7 @@
 import { inngest } from '../inngest.js';
 import { octokit } from '../../libs/octokit.js';
-
+import { run } from '@openai/agents';
+import { githubReviewAgent } from '../../agent/agent.js'
 import "dotenv/config";
 
 /**
@@ -12,7 +13,6 @@ import "dotenv/config";
  *      }
  *  }
  */
-
 
 export const githubPullRequest = inngest.createFunction(
     { id: 'pr-request-function', triggers: [{ event: 'github/pr.request' }] },
@@ -73,6 +73,60 @@ export const githubPullRequest = inngest.createFunction(
                 previous_filename: change.previous_filename,
                 changes: change.changes
             }));
+        });
+
+        if (changes.length === 0) {
+            return {
+                message: 'There is no change in this PR!',
+                skipped: true
+            }
+        }
+
+        // 3. AI Analyse 
+        const aiResponse = await step.run('ai-analyse-pr', async () => {
+            const llmResult = await run(
+                githubReviewAgent,
+                `
+                Pull Request Information:
+                ${JSON.stringify(pullRequestInfo, null, 2)}
+                \n \n
+
+                Changes Details:
+                ${JSON.stringify(changes, null, 2)}
+                `);
+                
+            if (!llmResult.finalOutput) {
+                throw new Error('AI agent returned no output');
+            }
+            return {
+                llmResponse: llmResult.finalOutput
+            }
+        });
+
+        // 4. create comment on the PR
+        await step.run('add review comments', async () => {
+            const { content, criticalFixes, suggestion } = aiResponse.llmResponse;
+
+            const sections = [content];
+
+            if (criticalFixes?.length) {
+                sections.push(
+                    `**Critical Changes**: \n${criticalFixes?.map(fix => `-${fix}`).join('\n')}`
+                )
+            }
+
+            if (suggestion?.length) {
+                sections.push(
+                    `**Suggestion**: \n ${suggestion?.map(suggestion => `-${suggestion}`).join('\n')}`
+                )
+            }
+
+            await octokit.issues.createComment({
+                owner,
+                repo,
+                issue_number: pull_number,
+                body: sections.join('\n')
+            });
         });
     }
 );
