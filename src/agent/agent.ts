@@ -5,7 +5,7 @@ const githubReviewOutputSchema = z.object({
     criticalFixes: z.array(z.string()).optional().nullable().describe('critical fixes if any'),
     suggestion: z.array(z.string()).optional().nullable().describe('suggestions if any'),
     content: z.string().describe('Actual content for the reply')
-})
+});
 
 export const githubReviewAgent = new Agent({
     name: 'github code review agent',

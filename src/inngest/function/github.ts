@@ -1,8 +1,12 @@
 import { inngest } from '../inngest.js';
 import { octokit } from '../../libs/octokit.js';
 import { run } from '@openai/agents';
-import { githubReviewAgent } from '../../agent/agent.js'
+import { githubReviewAgent } from '../../agent/agent.js';
+import { isVectorStoreEmpty, shouldSkipFiles } from '../../utils/utils.js';
+import { saveChunk } from '../../libs/pinecone.js';
 import "dotenv/config";
+import { fetchRepoFiles } from '../../services/githubActions.js';
+import { chunkFiles } from '../../services/chunker.js';
 
 /**
  * event: {
@@ -18,6 +22,28 @@ export const githubPullRequest = inngest.createFunction(
     { id: 'pr-request-function', triggers: [{ event: 'github/pr.request' }] },
     async ({ event, step }) => {
         const { owner, repo, pull_number } = event.data;
+
+        // check if the repo is indexed or not.
+        const isRepoIndexed = await isVectorStoreEmpty();
+
+        if (!isRepoIndexed) {
+            // just the embeddigs of current repo  
+            await step.run('add-repo-embaddings', async () => {
+                // get the complete repo data
+                const files = await fetchRepoFiles(owner, repo);
+                // chunk the files
+                const chunckedDocuments = await chunkFiles(files, repo);
+
+                // save the chunked files to pineconeStore
+                await saveChunk(repo, chunckedDocuments);
+            });
+        }
+
+        // add embeddings of review branch
+        await step.run('add-review-branch-embaddings', async () => {
+            // TODO: complete this
+        });
+
         // 1. fetch pull request information
         const pullRequestInfo = await step.run('fetch-pull-request-information', async () => {
             // check if request exists
@@ -94,7 +120,7 @@ export const githubPullRequest = inngest.createFunction(
                 Changes Details:
                 ${JSON.stringify(changes, null, 2)}
                 `);
-                
+
             if (!llmResult.finalOutput) {
                 throw new Error('AI agent returned no output');
             }
