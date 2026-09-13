@@ -28,20 +28,6 @@ export const IGNORE_EXTENSIONS = new Set([
     ".db", ".sqlite", ".sqlite3", ".mdb", ".sqldump"
 ]);
 
-// check if the repo is indexed or not
-export async function isVectorStoreEmpty() {
-    const pineconeIndex = getIndex();
-    const stats = await pineconeIndex.describeIndexStats();
-
-    const totalRecords = stats.totalRecordCount ?? 0;
-
-    if (totalRecords === 0) {
-        return true;
-    }
-
-    return false;
-}
-
 export function shouldSkipFiles(path: string, size: number | undefined) {
     // check for the size
     if (typeof size === 'number' && size >= 200_000) return true;

@@ -28,3 +28,27 @@ export async function saveChunk(repo: string, document: Array<any>) {
         }
     )
 }
+
+// similarity search feature
+export async function searchRepo(
+    repo: string,
+    query: string,
+    k = 8
+) {
+    const namespace = repo.replace('/', '-');
+
+    const vectorStore = await PineconeStore.fromExistingIndex(
+        embaddings,
+        {
+            pineconeIndex: getIndex(),
+            namespace
+        }
+    );
+
+    const docs = await vectorStore.similaritySearch(
+        query,
+        k
+    );
+
+    return docs;
+}

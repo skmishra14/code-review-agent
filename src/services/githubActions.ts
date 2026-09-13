@@ -36,3 +36,40 @@ export async function fetchRepoFiles(owner: string, repo: string) {
 
     return files;
 }
+
+export async function fetchPullRequestFiles(owner: string, repo: string, pull_number: number) {
+    const pullRequestObject = await octokit.pulls.get({ owner, repo, pull_number }).catch((err) => {
+        throw err;
+    });
+
+    return {
+        id: pullRequestObject.data.id,
+        title: pullRequestObject.data.title,
+        state: pullRequestObject.data.state,
+        number: pullRequestObject.data.number,
+        comments: pullRequestObject.data.comments,
+        url: pullRequestObject.data.url,
+        diffUrl: pullRequestObject.data.diff_url,
+        changes: pullRequestObject.data.changed_files,
+        commits: pullRequestObject.data.commits
+    }
+}
+
+export async function fetchPullRequestChanges(owner: string, repo: string, pull_number: number) {
+    const changedResult = await octokit.paginate(octokit.pulls.listFiles, {
+        owner,
+        repo,
+        pull_number,
+        per_page: 100
+    });
+
+    return changedResult.map((change) => ({
+        fileName: change.filename,
+        status: change.status,
+        additions: change.additions,
+        patch: change.patch,
+        deletions: change.deletions,
+        previous_filename: change.previous_filename,
+        changes: change.changes
+    }));
+}

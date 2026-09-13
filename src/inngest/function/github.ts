@@ -2,10 +2,9 @@ import { inngest } from '../inngest.js';
 import { octokit } from '../../libs/octokit.js';
 import { run } from '@openai/agents';
 import { githubReviewAgent } from '../../agent/agent.js';
-import { isVectorStoreEmpty, shouldSkipFiles } from '../../utils/utils.js';
-import { saveChunk } from '../../libs/pinecone.js';
+import { saveChunk, searchRepo } from '../../libs/pinecone.js';
 import "dotenv/config";
-import { fetchRepoFiles } from '../../services/githubActions.js';
+import { fetchPullRequestChanges, fetchPullRequestFiles, fetchRepoFiles } from '../../services/githubActions.js';
 import { chunkFiles } from '../../services/chunker.js';
 
 /**
@@ -23,47 +22,26 @@ export const githubPullRequest = inngest.createFunction(
     async ({ event, step }) => {
         const { owner, repo, pull_number } = event.data;
 
-        // check if the repo is indexed or not.
-        const isRepoIndexed = await isVectorStoreEmpty();
+        // just the embeddigs of current repo  
+        const files = await step.run('add-repo-embaddings', async () => {
+            // get the complete repo data
+            return fetchRepoFiles(owner, repo);
+        });
 
-        if (!isRepoIndexed) {
-            // just the embeddigs of current repo  
-            await step.run('add-repo-embaddings', async () => {
-                // get the complete repo data
-                const files = await fetchRepoFiles(owner, repo);
-                // chunk the files
-                const chunckedDocuments = await chunkFiles(files, repo);
+        const chunckedDocuments = await step.run('chunking-the-repo', async () => {
+            return chunkFiles(files, repo);
+        });
 
-                // save the chunked files to pineconeStore
-                await saveChunk(repo, chunckedDocuments);
-            });
-        }
-
-        // add embeddings of review branch
-        await step.run('add-review-branch-embaddings', async () => {
-            // TODO: complete this
+        await step.run('save-chunks-to-vector-store', async () => {
+            await saveChunk(repo, chunckedDocuments);
         });
 
         // 1. fetch pull request information
         const pullRequestInfo = await step.run('fetch-pull-request-information', async () => {
             // check if request exists
-            try {
-                const pullRequestObject = await octokit.pulls.get({ owner, repo, pull_number });
+            const pullRequestObject = await fetchPullRequestFiles(owner, repo, pull_number);
+            return pullRequestObject;
 
-                return {
-                    id: pullRequestObject.data.id,
-                    title: pullRequestObject.data.title,
-                    state: pullRequestObject.data.state,
-                    number: pullRequestObject.data.number,
-                    comments: pullRequestObject.data.comments,
-                    url: pullRequestObject.data.url,
-                    diffUrl: pullRequestObject.data.diff_url,
-                    changes: pullRequestObject.data.changed_files,
-                    commits: pullRequestObject.data.commits
-                }
-            } catch (error) {
-                return null;
-            }
         });
 
         if (!pullRequestInfo) {
@@ -83,22 +61,8 @@ export const githubPullRequest = inngest.createFunction(
 
         // 2. fetch the details of the changes
         const changes = await step.run('fetch-changes', async () => {
-            const changedResult = await octokit.paginate(octokit.pulls.listFiles, {
-                owner,
-                repo,
-                pull_number,
-                per_page: 100
-            });
-
-            return changedResult.map((change) => ({
-                fileName: change.filename,
-                status: change.status,
-                additions: change.additions,
-                patch: change.patch,
-                deletions: change.deletions,
-                previous_filename: change.previous_filename,
-                changes: change.changes
-            }));
+            const changedResult = await fetchPullRequestChanges(owner, repo, pull_number);
+            return changedResult;
         });
 
         if (changes.length === 0) {
@@ -108,6 +72,23 @@ export const githubPullRequest = inngest.createFunction(
             }
         }
 
+        const contextResult = await step.run('get-ai-context-from-change', async () => {
+            return searchRepo(repo, 
+                `
+                Find the code and the files that is/are relevent to this pull request
+
+                Changs: 
+                ${JSON.stringify(changes, null, 2)}
+
+                Find:
+                - related functions
+                - chagnes scope
+                - caller and user
+                - relevent tests
+                `
+            );
+        });
+
         // 3. AI Analyse 
         const aiResponse = await step.run('ai-analyse-pr', async () => {
             const llmResult = await run(
@@ -116,6 +97,9 @@ export const githubPullRequest = inngest.createFunction(
                 Pull Request Information:
                 ${JSON.stringify(pullRequestInfo, null, 2)}
                 \n \n
+
+                Context:
+                ${contextResult}
 
                 Changes Details:
                 ${JSON.stringify(changes, null, 2)}
